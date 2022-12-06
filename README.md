@@ -28,7 +28,7 @@ z = transform.encode(x) # [1, 2, 455, 2796] = [batch_size, channels, frequencies
 y = transform.decode(z) # [1, 1, 262144]
 ```
 
-### Example CQT spectrogram (z)
+### Example CQT Magnitude Spectrogram (z)
 <img src="./IMAGE.png"></img>
 
 ## TODO
