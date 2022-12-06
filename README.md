@@ -1,6 +1,7 @@
 
 # CQT - PyTorch
 
+
 An invertible and differentiable implementation of the Constant-Q Transform (CQT) using Non-stationary Gabor Transform (NSGT), in PyTorch.
 
 ```bash
@@ -27,7 +28,11 @@ z = transform.encode(x) # [1, 2, 455, 2796] = [batch_size, channels, frequencies
 y = transform.decode(z) # [1, 1, 262144]
 ```
 
+### Example CQT spectrogram (z)
+<img src="./IMAGE.png"></img>
+
 ## TODO
+* [x] Power of 2 length (with `power_of_2_length` constructor arg).
 * [ ] Understand why/if inverse window is necessary.
 * [ ] Allow variable audio lengths by chunking.
 

@@ -1,8 +1,12 @@
-from math import floor
+from math import ceil, floor
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
+
+
+def next_power_of_2(x: Tensor) -> int:
+    return 2 ** ceil(x.item()).bit_length()
 
 
 def get_center_frequencies(
@@ -51,10 +55,12 @@ def get_bandwidths(
     return bandwidths_all
 
 
-def get_windows_range_indices(lengths: Tensor, positions: Tensor) -> Tensor:
+def get_windows_range_indices(
+    lengths: Tensor, positions: Tensor, power_of_2_length: bool
+) -> Tensor:
     """Compute windowing tensor of indices"""
     num_bins = lengths.shape[0] // 2
-    max_length = lengths.max()
+    max_length = next_power_of_2(lengths.max()) if power_of_2_length else lengths.max()
     ranges = []
     for i in range(num_bins):
         start = positions[i] - max_length
@@ -62,14 +68,14 @@ def get_windows_range_indices(lengths: Tensor, positions: Tensor) -> Tensor:
     return torch.stack(ranges, dim=0).long()
 
 
-def get_windows(lengths: Tensor) -> Tensor:
+def get_windows(lengths: Tensor, power_of_2_length: bool) -> Tensor:
     """Compute tensor of stacked (centered) windows"""
     num_bins = lengths.shape[0] // 2
-    max_length = lengths.max()
+    max_length = next_power_of_2(lengths.max()) if power_of_2_length else lengths.max()
     windows = []
     for length in lengths[:num_bins]:
         # Pad windows left and right to center them
-        pad_left = floor(max_length / 2 - length / 2)
+        pad_left = floor(max_length / 2 - length / 2)  # type: ignore
         pad_right = int(max_length - length - pad_left)
         windows += [F.pad(torch.hann_window(int(length)), pad=(pad_left, pad_right))]
     return torch.stack(windows, dim=0)
@@ -87,6 +93,7 @@ class CQT(nn.Module):
         num_bins_per_octave: int,
         sample_rate: int,
         block_length: int,
+        power_of_2_length: bool = False,
     ):
         super().__init__()
         self.block_length = block_length
@@ -111,10 +118,14 @@ class CQT(nn.Module):
             get_windows_range_indices(
                 lengths=window_lengths,
                 positions=torch.round(frequencies * block_length / sample_rate),
+                power_of_2_length=power_of_2_length,
             ),
         )
 
-        self.register_buffer("windows", get_windows(lengths=window_lengths))
+        self.register_buffer(
+            "windows",
+            get_windows(lengths=window_lengths, power_of_2_length=power_of_2_length),
+        )
 
         self.register_buffer(
             "windows_inverse",
