@@ -16,15 +16,15 @@ pip install cqt-pytorch
 from cqt_pytorch import CQT
 
 transform = CQT(
-    num_octaves = 7,
-    num_bins_per_octave = 65,
+    num_octaves = 8,
+    num_bins_per_octave = 64,
     sample_rate = 48000,
     block_length = 2 ** 18
 )
 
 # (Random) audio waveform tensor x
 x = torch.randn(1, 2, 2**18) # [1, 1, 262144] = [batch_size, channels, timesteps]
-z = transform.encode(x) # [1, 2, 455, 2796] = [batch_size, channels, frequencies, time]
+z = transform.encode(x) # [1, 2, 512, 2839] = [batch_size, channels, frequencies, time]
 y = transform.decode(z) # [1, 1, 262144]
 ```
 
