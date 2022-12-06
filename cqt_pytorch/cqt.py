@@ -135,7 +135,7 @@ class CQT(nn.Module):
         frequencies = torch.zeros(b, c, length).to(transform)
         frequencies.scatter_add_(
             dim=-1,
-            index=self.windows_range_indices.view(-1).expand(b, c, -1) % l,  # type: ignore # noqa
+            index=self.windows_range_indices.view(-1).expand(b, c, -1) % length,  # type: ignore # noqa
             src=crops_unwindowed.view(b, c, -1),
         )
         waveform = torch.fft.ifft(frequencies)
