@@ -33,7 +33,7 @@ y = transform.decode(z) # [1, 1, 262144]
 
 ## TODO
 * [x] Power of 2 length (with `power_of_2_length` constructor arg).
-* [ ] Understand why/if inverse window is necessary.
+* [x] Understand why/if inverse window is necessary (it is necessary for perfect inversion).
 * [ ] Allow variable audio lengths by chunking.
 
 ## Appreciation
