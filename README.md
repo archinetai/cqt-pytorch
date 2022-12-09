@@ -34,7 +34,7 @@ y = transform.decode(z) # [1, 1, 262144]
 ## TODO
 * [x] Power of 2 length (with `power_of_2_length` constructor arg).
 * [x] Understand why/if inverse window is necessary (it is necessary for perfect inversion).
-* [ ] Allow variable audio lengths by chunking.
+* [x] Allow variable audio lengths by chunking (now input can be a multiple of `block_length`)
 
 ## Appreciation
 Special thanks to [Eloi Moliner](https://github.com/eloimoliner) for taking the time to help me understand how CQT works. Check out his own implementation with interesting features at [eloimoliner/CQT_pytorch](https://github.com/eloimoliner/CQT_pytorch).

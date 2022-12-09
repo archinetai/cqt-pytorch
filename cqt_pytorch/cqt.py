@@ -1,12 +1,21 @@
 from math import ceil, floor
+from typing import Optional, TypeVar
 
 import torch
 import torch.nn.functional as F
+from einops import rearrange, repeat
 from torch import Tensor, einsum, nn
 
 
 def next_power_of_2(x: float) -> int:
     return 2 ** ceil(x).bit_length()
+
+
+T = TypeVar("T")
+
+
+def default(val: Optional[T], default: T) -> T:
+    return val if val is not None else default
 
 
 def get_center_frequencies(
@@ -22,7 +31,7 @@ def get_center_frequencies(
         [
             frequencies,
             torch.tensor([frequency_nyquist]),
-            sample_rate - torch.flip(frequencies, dims=[0]),  # not necessary
+            sample_rate - torch.flip(frequencies, dims=[0]),
         ],
         dim=0,
     )
@@ -51,7 +60,7 @@ def get_bandwidths(
     return bandwidths_all
 
 
-def get_windows_range_indices(positions: Tensor, max_length: int) -> Tensor:
+def get_windows_range_idx(positions: Tensor, max_length: int) -> Tensor:
     """Compute windowing tensor of indices"""
     num_bins = positions.shape[0] // 2
     ranges = []
@@ -74,15 +83,15 @@ def get_windows(lengths: Tensor, max_length: int) -> Tensor:
 
 
 def get_windows_inverse(
-    windows: Tensor, windows_range_indices: Tensor, max_length: int, block_length: int
+    windows: Tensor, windows_range_idx: Tensor, max_length: int, block_length: int
 ) -> Tensor:
     """Compute tensor of stacked (centered) inverse windows"""
     windows_overlap = torch.zeros(block_length).scatter_add_(
         dim=0,
-        index=windows_range_indices.view(-1),
+        index=windows_range_idx.view(-1),
         src=(windows**2).view(-1),
     )
-    return windows / (windows_overlap[windows_range_indices] + 1e-8)
+    return windows / (windows_overlap[windows_range_idx] + 1e-8)
 
 
 class CQT(nn.Module):
@@ -91,11 +100,12 @@ class CQT(nn.Module):
         num_octaves: int,
         num_bins_per_octave: int,
         sample_rate: int,
-        block_length: int,
+        block_length: Optional[int] = None,
         power_of_2_length: bool = False,
     ):
         super().__init__()
-        self.block_length = block_length
+        # Default to 1s block length
+        block_length = default(block_length, sample_rate)
 
         frequencies = get_center_frequencies(
             num_octaves=num_octaves,
@@ -116,8 +126,8 @@ class CQT(nn.Module):
         if power_of_2_length:
             max_window_length = next_power_of_2(max_window_length)
 
-        windows_range_indices = (
-            get_windows_range_indices(
+        windows_range_idx = (
+            get_windows_range_idx(
                 max_length=max_window_length,
                 positions=torch.round(frequencies * block_length / sample_rate),
             )
@@ -128,31 +138,53 @@ class CQT(nn.Module):
 
         windows_inverse = get_windows_inverse(
             windows=windows,
-            windows_range_indices=windows_range_indices,
+            windows_range_idx=windows_range_idx,
             max_length=max_window_length,
             block_length=block_length,
         )
 
-        self.register_buffer("windows_range_indices", windows_range_indices)
+        self.block_length = block_length  # t
+        self.max_window_length = max_window_length  # l
+        self.register_buffer("windows_range_idx", windows_range_idx)
         self.register_buffer("windows", windows)
         self.register_buffer("windows_inverse", windows_inverse)
 
     def encode(self, waveform: Tensor) -> Tensor:
+        nt, t = *waveform.shape[2:], self.block_length
+        assert nt % t == 0, f"wave length {nt} must be divisible by block_length {t}"
+        # Stack blocks in batch dimension
+        waveform = rearrange(waveform, "b c (n t) -> (b n) c t", t=t)
+        # Compute frequencies from waveform
         frequencies = torch.fft.fft(waveform)
-        crops = frequencies[:, :, self.windows_range_indices]
-        crops_windowed = einsum("... t k, t k -> ... t k", crops, self.windows)
+        # Extract window crops from frequencies
+        crops = frequencies[:, :, self.windows_range_idx]
+        # Apply windows on all crops
+        crops_windowed = einsum("... k l, k l -> ... k l", crops, self.windows)
+        # Transform back to original domain
         transform = torch.fft.ifft(crops_windowed)
-        return transform
+        # Rearrange transformed blocks lengthwise
+        return rearrange(transform, "(b n) c k l -> b c k (n l)", n=nt // t)
 
     def decode(self, transform: Tensor) -> Tensor:
-        b, c, length = *transform.shape[0:2], self.block_length
+        b, c, _, nl, t, l = *transform.shape, self.block_length, self.max_window_length  # type: ignore # noqa
+        assert nl % l == 0, f"transform length {nl} must be divisible by {l}"  # noqa
+        # Compute number of blocks n
+        n = nl // l
+        # Stack transforms in batch dimension
+        transform = rearrange(transform, "b c k (n l) -> (b n) c k l", n=n)
+        # Compute frequencies of for each bin
         crops_windowed = torch.fft.fft(transform)
-        crops = einsum("... t k, t k -> ... t k", crops_windowed, self.windows_inverse)
-        frequencies = torch.zeros(b, c, length).to(transform)
+        # Apply inverse windows
+        crops = einsum("... k l, k l -> ... k l", crops_windowed, self.windows_inverse)
+        # Create tensor for output signal
+        frequencies = torch.zeros(b * n, c, t).to(transform)
+        # Overlap inverse windowed bins at right indices
         frequencies.scatter_add_(
             dim=-1,
-            index=self.windows_range_indices.view(-1).expand(b, c, -1),  # type: ignore
-            src=crops.view(b, c, -1),
+            index=repeat(self.windows_range_idx, "k l -> bn c (k l)", bn=b * n, c=c),  # type: ignore # noqa
+            src=rearrange(crops, "bn c k l -> bn c (k l)", l=l),
         )
-        waveform = torch.fft.irfft(frequencies, n=length)
-        return waveform
+        # Go back to real waveform domain
+        waveform = torch.fft.irfft(frequencies, t)
+        # Rearrange waveform blocks timewise
+        return rearrange(waveform, "(b n) c t -> b c (n t)", n=n)
